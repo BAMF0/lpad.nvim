@@ -20,8 +20,9 @@ M.defaults = {
 
     -- Keymaps active inside the bug Telescope picker
     mappings = {
-        show_status = "<CR>",   -- open status float for selected bug
-        open_browser = "<C-o>", -- open bug URL in browser
+        show_status  = "<CR>",   -- open status float for selected bug
+        open_browser = "<C-o>",  -- open bug URL in browser
+        filter       = "<C-f>",  -- open filter picker
     },
 
     -- Keymaps active inside the status floating window
