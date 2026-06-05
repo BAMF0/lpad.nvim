@@ -50,8 +50,8 @@ local function make_bug_previewer(opts)
             local lines, hls = ui.render_bug(bug)
             local bufnr = self.state.bufnr
             vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
-            vim.api.nvim_set_option_value("wrap", true, { buf = bufnr })
-            vim.api.nvim_set_option_value("linebreak", true, { buf = bufnr })
+            vim.api.nvim_set_option_value("wrap", true, { win = self.state.winid })
+            vim.api.nvim_set_option_value("linebreak", true, { win = self.state.winid })
             for _, hl in ipairs(hls) do
                 local lnum, cs, ce, grp = hl[1], hl[2], hl[3], hl[4]
                 pcall(vim.api.nvim_buf_add_highlight, bufnr, -1, grp, lnum, cs, ce)
@@ -158,8 +158,8 @@ local function make_comment_previewer()
             local lines = { header, sep, "" }
             vim.list_extend(lines, body_lines)
             vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
-            vim.api.nvim_set_option_value("wrap", true, { buf = bufnr })
-            vim.api.nvim_set_option_value("linebreak", true, { buf = bufnr })
+            vim.api.nvim_set_option_value("wrap", true, { win = self.state.winid })
+            vim.api.nvim_set_option_value("linebreak", true, { win = self.state.winid })
             pcall(vim.api.nvim_buf_add_highlight, bufnr, -1, "Title", 0, 0, -1)
             pcall(vim.api.nvim_buf_add_highlight, bufnr, -1, "Comment", 1, 0, -1)
         end,
