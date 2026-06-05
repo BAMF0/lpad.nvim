@@ -20,7 +20,7 @@ local function read_json(path)
     end
     local raw = f:read("*a")
     f:close()
-    local ok, data = pcall(vim.json.decode, raw)
+    local ok, data = pcall(vim.json.decode, raw, { luanil = { object = true, array = true } })
     if not ok then
         return nil, "JSON parse error in " .. path
     end
