@@ -147,7 +147,11 @@ function M.render_bug(bug)
     end
 
     push("")
-    push(string.format("  %s", "Press <C-o> to open in browser · q / <Esc> to close"), HL.dim)
+    push(string.format("  %s  ·  %s  ·  %s",
+        "<C-o> open in browser",
+        "q / <Esc> close",
+        "<C-b> branch  <C-s> subscribe  <C-c> comments"
+    ), HL.dim)
 
     return lines, hls
 end
@@ -209,6 +213,74 @@ function M.show_bug(bug, opts)
         local actions = require("lpad.actions")
         actions.open(bug.id, opts.bug_url)
     end, { buffer = bufnr, nowait = true, silent = true, desc = "Open bug in browser" })
+
+    -- Branch keymap: prompt for description, then create branch
+    vim.keymap.set("n", opts.float_mappings.branch or "<C-b>", function()
+        local branch_mod = require("lpad.branch")
+        local cache = require("lpad.cache")
+        local series = cache.detect_series()
+        local desc = vim.fn.input("Branch description: ")
+        if desc == "" then return end
+        branch_mod.create_branch({
+            bug_id = bug.id,
+            description = desc,
+            series = series,
+            kind = "normal",
+        })
+    end, { buffer = bufnr, nowait = true, silent = true, desc = "Create branch for bug" })
+
+    -- Subscribe keymap
+    vim.keymap.set("n", opts.float_mappings.subscribe or "<C-s>", function()
+        local actions = require("lpad.actions")
+        actions.subscribe(bug.id, { bug_url = opts.bug_url })
+    end, { buffer = bufnr, nowait = true, silent = true, desc = "Subscribe to bug" })
+
+    -- Comments keymap
+    vim.keymap.set("n", opts.float_mappings.comments or "<C-c>", function()
+        if vim.api.nvim_win_is_valid(winnr) then
+            vim.api.nvim_win_close(winnr, true)
+        end
+        require("lpad").comments(bug.id)
+    end, { buffer = bufnr, nowait = true, silent = true, desc = "View comments" })
+end
+
+-- Show a simple info message in a small floating window.
+-- opts: { title = string, border = string }
+function M.show_message(text, opts)
+    opts = opts or {}
+    local lines = vim.split(text, "\n")
+
+    local ui_info = vim.api.nvim_list_uis()[1]
+    local width = math.min(#text + 4, math.floor(ui_info.width * 0.8))
+    local height = #lines + 2
+    local row = math.floor((ui_info.height - height) / 2)
+    local col = math.floor((ui_info.width - width) / 2)
+
+    local bufnr = vim.api.nvim_create_buf(false, true)
+    vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
+    vim.api.nvim_set_option_value("modifiable", false, { buf = bufnr })
+    vim.api.nvim_set_option_value("bufhidden", "wipe", { buf = bufnr })
+
+    local win = vim.api.nvim_open_win(bufnr, true, {
+        relative = "editor",
+        row = row,
+        col = col,
+        width = width,
+        height = height,
+        style = "minimal",
+        border = opts.border or "rounded",
+        title = opts.title or " lpad ",
+        title_pos = "center",
+    })
+    vim.api.nvim_set_option_value("wrap", true, { win = win })
+    vim.api.nvim_set_option_value("linebreak", true, { win = win })
+
+    vim.keymap.set("n", "q", function()
+        if vim.api.nvim_win_is_valid(win) then vim.api.nvim_win_close(win, true) end
+    end, { buffer = bufnr, nowait = true, silent = true })
+    vim.keymap.set("n", "<Esc>", function()
+        if vim.api.nvim_win_is_valid(win) then vim.api.nvim_win_close(win, true) end
+    end, { buffer = bufnr, nowait = true, silent = true })
 end
 
 return M

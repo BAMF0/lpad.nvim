@@ -1,7 +1,9 @@
 -- lpad.nvim — lualine component
 --
 -- Displays the current branch's bug ID and status in the statusline when on
--- an lp<N>-* branch. Returns an empty string otherwise (component disappears).
+-- an lpad-managed branch (lp<N>-*, <series>-lp<N>-*, <series>-sru-lp<N>-*,
+-- or merge-lp<N>-<series>). Returns an empty string otherwise (component
+-- disappears).
 --
 -- Usage in lualine config:
 --

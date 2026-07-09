@@ -9,8 +9,18 @@ local M = {}
 --   https://git.launchpad.net/~team/ubuntu/+source/curl
 local SOURCE_PKG_PAT = "+source/([^/%s]+)"
 
--- Branch name pattern: lp<bug_id>-*
-local BRANCH_BUG_PAT = "^lp(%d+)"
+-- Branch name patterns matching all four lpad branch naming conventions:
+--   lp1234567-fix-crash              (normal)
+--   noble-lp1234567-fix-crash        (normal + series)
+--   noble-sru-lp1234567-fix-crash    (sru)
+--   merge-lp1234567-noble            (merge)
+-- Mirrors repo.py:parse_bug_number_from_branch
+local BRANCH_BUG_PATTERNS = {
+    "^merge%-lp(%d+)",                     -- merge-lp<N>-<series>
+    "^[%a%d]+%-sru%-lp(%d+)",               -- <series>-sru-lp<N>-<slug>
+    "^[%a%d]+%-lp(%d+)",                     -- <series>-lp<N>-<slug>
+    "^lp(%d+)",                             -- lp<N>-<slug>
+}
 
 -- Read and JSON-decode a file. Returns the parsed table or nil + error string.
 local function read_json(path)
@@ -58,12 +68,20 @@ function M.get_branch()
     return branch
 end
 
--- Parse a bug number from a branch name like lp1234567-fix-crash.
+-- Parse a bug number from a branch name.
+-- Recognises all four lpad branch formats:
+--   lp1234567-fix-crash              (normal)
+--   noble-lp1234567-fix-crash        (normal + series)
+--   noble-sru-lp1234567-fix-crash    (sru)
+--   merge-lp1234567-noble            (merge)
 -- Returns the bug id as a number, or nil.
 function M.bug_id_from_branch(branch)
     if not branch then return nil end
-    local id = branch:match(BRANCH_BUG_PAT)
-    return id and tonumber(id) or nil
+    for _, pat in ipairs(BRANCH_BUG_PATTERNS) do
+        local id = branch:match(pat)
+        if id then return tonumber(id) end
+    end
+    return nil
 end
 
 -- Load bugs for the given package from cache.
@@ -122,6 +140,137 @@ function M.bug_from_branch(pkg, cache_dir)
         return nil, string.format("bug #%d not found in cache — run :LpadSync", bug_id)
     end
     return bug, nil
+end
+
+-- ---------------------------------------------------------------------------
+-- Cache management
+-- ---------------------------------------------------------------------------
+
+-- List all cached packages with their info strings.
+-- Returns a list of { name = string, info = string|nil, bugs = int }
+function M.list_caches(cache_dir)
+    local results = {}
+    local scan = vim.loop or vim.uv
+    local ok, entries = pcall(scan.fs_scandir, scan, cache_dir)
+    if not ok or not entries then return results end
+    local names = {}
+    while true do
+        local name = scan.fs_scandir_next(entries)
+        if not name then break end
+        if name:match("%.json$") then
+            table.insert(names, name)
+        end
+    end
+    table.sort(names)
+    for _, name in ipairs(names) do
+        local pkg = name:gsub("%.json$", "")
+        local path = cache_dir .. "/" .. name
+        local data = read_json(path)
+        if data and data.bugs then
+            local age = ""
+            local cached_at = data.cached_at or 0
+            local diff = os.time() - cached_at
+            if diff < 60 then age = diff .. "s ago"
+            elseif diff < 3600 then age = math.floor(diff / 60) .. "m ago"
+            else age = math.floor(diff / 3600) .. "h ago" end
+            table.insert(results, {
+                name = pkg,
+                info = "cached " .. age .. " (" .. #data.bugs .. " bugs)",
+                bugs = #data.bugs,
+            })
+        end
+    end
+    return results
+end
+
+-- List all comment cache files.
+-- Returns a list of bug IDs (as numbers) that have cached comments.
+function M.list_comment_caches(cache_dir)
+    local dir = cache_dir .. "/comments"
+    local scan = vim.loop or vim.uv
+    local results = {}
+    local ok, entries = pcall(scan.fs_scandir, scan, dir)
+    if not ok or not entries then return results end
+    while true do
+        local name = scan.fs_scandir_next(entries)
+        if not name then break end
+        local id = name:match("^(%d+)%.json$")
+        if id then table.insert(results, tonumber(id)) end
+    end
+    table.sort(results)
+    return results
+end
+
+-- Delete a bug cache file for the given package (or all if nil).
+function M.clear_cache(cache_dir, pkg)
+    if pkg then
+        local path = cache_dir .. "/" .. pkg .. ".json"
+        pcall(os.remove, path)
+    else
+        local scan = vim.loop or vim.uv
+        local ok, entries = pcall(scan.fs_scandir, scan, cache_dir)
+        if ok and entries then
+            while true do
+                local name = scan.fs_scandir_next(entries)
+                if not name then break end
+                if name:match("%.json$") then
+                    pcall(os.remove, cache_dir .. "/" .. name)
+                end
+            end
+        end
+    end
+end
+
+-- Delete a comment cache file for the given bug_id (or all if nil).
+function M.clear_comment_cache(cache_dir, bug_id)
+    local dir = cache_dir .. "/comments"
+    if bug_id then
+        pcall(os.remove, dir .. "/" .. bug_id .. ".json")
+    else
+        local scan = vim.loop or vim.uv
+        local ok, entries = pcall(scan.fs_scandir, scan, dir)
+        if ok and entries then
+            while true do
+                local name = scan.fs_scandir_next(entries)
+                if not name then break end
+                if name:match("%.json$") then
+                    pcall(os.remove, dir .. "/" .. name)
+                end
+            end
+        end
+    end
+end
+
+-- ---------------------------------------------------------------------------
+-- Series detection from debian/changelog
+-- ---------------------------------------------------------------------------
+
+-- Extract the target series from the top entry of debian/changelog.
+-- Mirrors repo.py:parse_changelog_series.
+-- Returns the series string (e.g. "noble"), or nil.
+function M.detect_series()
+    local repo_root = vim.fn.system("git rev-parse --show-toplevel 2>/dev/null"):gsub("\n", "")
+    if repo_root == "" then return nil end
+    local path = repo_root .. "/debian/changelog"
+    local f = io.open(path, "r")
+    if not f then return nil end
+    for line in f:lines() do
+        line = line:match("^%s*(.-)%s*$")
+        if line and line ~= "" then
+            if line:match("^%[") then
+                -- team header, skip
+            elseif line:find("%(") and line:find("%)") then
+                local after_version = line:match("%)(.*)")
+                if after_version then
+                    local dist = after_version:match("^%s*(%S+)")
+                    if dist and dist ~= "" then return dist end
+                end
+            end
+            break
+        end
+    end
+    f:close()
+    return nil
 end
 
 return M
